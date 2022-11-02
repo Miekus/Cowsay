@@ -1,0 +1,60 @@
+pipeline{
+    agent any
+    stages {
+            stage ("checkoutManual") {
+                steps {
+                    deleteDir()
+                    script {
+                        try{
+                            sh "echo existing"
+                            checkout([$class: 'GitSCM', branches: [[name: "*/release/${env.release_version}"]], extensions: [[$class: 'CleanBeforeCheckout', deleteUntrackedNestedRepositories: true]], 
+                            userRemoteConfigs: [[credentialsId: '050dc3e8-6fb1-4cbd-815b-e920b7d8d46c', url: 'git@gitlab:root/cowsay.git']]])
+                        }
+                        catch (exc) {
+                            checkout([$class: 'GitSCM', branches: [[name: "*/master"]], extensions: [[$class: 'CleanBeforeCheckout', deleteUntrackedNestedRepositories: true]], 
+                            userRemoteConfigs: [[credentialsId: '050dc3e8-6fb1-4cbd-815b-e920b7d8d46c', url: 'git@gitlab:root/cowsay.git']]])
+                            sh "echo new"
+                            sh """
+                                git checkout -b release/${env.release_version}
+                                echo ${env.release_version}.0,'NOT FOR RELEASE' > v.txt                 
+                                git add .
+                                git commit -m "initial comit of new release branch"
+                                git push --set-upstream origin release/${env.release_version}
+                            """
+                        }
+                    }
+                }
+            }
+      
+        stage ("Build") {
+            steps {
+                sh "./init-cowsay.sh ${env.release_version}"
+            }
+        }
+        stage ("Test") {
+            steps {
+                sh "sleep 5"
+                sh "curl cow:4001"
+            }
+        }
+    
+        stage ("Release")
+        {
+            when {
+                branch '*/release/*'
+            }   
+            steps{
+                sh """
+                    echo ${env.release_version}.\$(git rev-list origin/release/${env.release_version} --count),'RELEASED' > v.txt
+                    git add . 
+                    git commit -m "New Release"
+                    git push origin HEAD:release/${env.release_version}
+                """
+                sh "./docker-image-build.sh ${env.release_version}"
+                sh "./init.sh ${env.release_version}"
+                sh "git clean -n -d"
+                sh "git clean --force -n -d"
+            }
+        }
+    }
+}
